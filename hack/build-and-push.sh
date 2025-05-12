@@ -228,14 +228,26 @@ inject_bundle_ref_to_pipelines() {
             {\"name\": \"kind\", \"value\": \"task\"}
         ]
     }"
+    echo "Bundle ref: ${bundle_ref}"
     local -r task_selector="select(.name == \"${task_name}\" and .version == \"${task_version}\")"
     find "$GENERATED_PIPELINES_DIR" "$CORE_SERVICES_PIPELINES_DIR" -maxdepth 1 -type f -name '*.yaml' | \
         while read -r pipeline_file; do
-            yq e "(.spec.tasks[].taskRef | ${task_selector}) |= ${bundle_ref}" -i "${pipeline_file}"
-            yq e "(.spec.finally[].taskRef | ${task_selector}) |= ${bundle_ref}" -i "${pipeline_file}"
+            echo "Processing file: ${pipeline_file}"
+            yq e "(.spec.tasks[].taskRef | ${task_selector}) |= ${bundle_ref}" "${pipeline_file}"
+            yq e "(.spec.finally[].taskRef | ${task_selector}) |= ${bundle_ref}" "${pipeline_file}"
         done
 }
 
+inject_external_bundle_ref_to_pipelines() {
+    find external-task/*/* -maxdepth 0 -type d | awk -F '/' '{ print $0, $2, $3 }' | \
+    while read -r task_dir task_name task_version
+    do
+        task_file="$(find "$task_dir" -maxdepth 1 -type f \( -iname "*.yaml" -o -iname "*.yml" \))"
+        task_bundle=$(yq -e '.task_bundle' "$task_file")
+        echo "injecting $task_name - $task_version - $task_bundle as external task"
+        inject_bundle_ref_to_pipelines "$task_name" "$task_version" "$task_bundle"
+    done
+}
 # Get task version from task definition rather than the version in the directory path.
 # Arguments: task_file
 # The version is output to stdout.
@@ -525,6 +537,7 @@ build_push_tasks() {
     find task/*/* -maxdepth 0 -type d | awk -F '/' '{ print $0, $2, $3 }' | \
     while read -r task_dir task_name task_version
     do
+        echo "Handling $task_dir - $task_name - $task_version"
         if [ -n "$TEST_TASKS" ] && echo "$TEST_TASKS" | grep -qv "$task_name" 2>/dev/null; then
             continue
         fi
@@ -608,6 +621,7 @@ build_push_tasks() {
         real_task_name=$(yq e '.metadata.name' "$prepared_task_file")
         inject_bundle_ref_to_pipelines "$real_task_name" "$task_version" "$task_bundle_with_digest"
     done
+    inject_external_bundle_ref_to_pipelines
 }
 
 
